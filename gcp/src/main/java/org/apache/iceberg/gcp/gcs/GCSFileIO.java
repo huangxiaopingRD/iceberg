@@ -30,12 +30,10 @@ import java.util.stream.Stream;
 import org.apache.iceberg.common.DynConstructors;
 import org.apache.iceberg.gcp.GCPProperties;
 import org.apache.iceberg.io.BulkDeletionFailureException;
-import org.apache.iceberg.io.FileIO;
+import org.apache.iceberg.io.DelegateFileIO;
 import org.apache.iceberg.io.FileInfo;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.OutputFile;
-import org.apache.iceberg.io.SupportsBulkOperations;
-import org.apache.iceberg.io.SupportsPrefixOperations;
 import org.apache.iceberg.metrics.MetricsContext;
 import org.apache.iceberg.relocated.com.google.common.collect.Iterators;
 import org.apache.iceberg.relocated.com.google.common.collect.Streams;
@@ -56,7 +54,7 @@ import org.slf4j.LoggerFactory;
  * <p>See <a href="https://cloud.google.com/storage/docs/folders#overview">Cloud Storage
  * Overview</a>
  */
-public class GCSFileIO implements FileIO, SupportsBulkOperations, SupportsPrefixOperations {
+public class GCSFileIO implements DelegateFileIO {
   private static final Logger LOG = LoggerFactory.getLogger(GCSFileIO.class);
   private static final String DEFAULT_METRICS_IMPL =
       "org.apache.iceberg.hadoop.HadoopMetricsContext";
@@ -152,24 +150,27 @@ public class GCSFileIO implements FileIO, SupportsBulkOperations, SupportsPrefix
                     builder.setCredentials(OAuth2Credentials.create(accessToken));
                   });
 
-          // Report Hadoop metrics if Hadoop is available
-          try {
-            DynConstructors.Ctor<MetricsContext> ctor =
-                DynConstructors.builder(MetricsContext.class)
-                    .hiddenImpl(DEFAULT_METRICS_IMPL, String.class)
-                    .buildChecked();
-            MetricsContext context = ctor.newInstance("gcs");
-            context.initialize(properties);
-            this.metrics = context;
-          } catch (NoClassDefFoundError | NoSuchMethodException | ClassCastException e) {
-            LOG.warn(
-                "Unable to load metrics class: '{}', falling back to null metrics",
-                DEFAULT_METRICS_IMPL,
-                e);
-          }
-
           return builder.build().getService();
         };
+
+    initMetrics(properties);
+  }
+
+  @SuppressWarnings("CatchBlockLogException")
+  private void initMetrics(Map<String, String> props) {
+    // Report Hadoop metrics if Hadoop is available
+    try {
+      DynConstructors.Ctor<MetricsContext> ctor =
+          DynConstructors.builder(MetricsContext.class)
+              .hiddenImpl(DEFAULT_METRICS_IMPL, String.class)
+              .buildChecked();
+      MetricsContext context = ctor.newInstance("gcs");
+      context.initialize(props);
+      this.metrics = context;
+    } catch (NoClassDefFoundError | NoSuchMethodException | ClassCastException e) {
+      LOG.warn(
+          "Unable to load metrics class: '{}', falling back to null metrics", DEFAULT_METRICS_IMPL);
+    }
   }
 
   @Override

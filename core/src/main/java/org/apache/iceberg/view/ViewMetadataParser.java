@@ -28,16 +28,21 @@ import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.SchemaParser;
+import org.apache.iceberg.TableMetadataParser.Codec;
 import org.apache.iceberg.io.InputFile;
 import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
+import org.apache.iceberg.relocated.com.google.common.collect.ImmutableList;
 import org.apache.iceberg.relocated.com.google.common.collect.Lists;
 import org.apache.iceberg.util.JsonUtil;
 
 public class ViewMetadataParser {
 
+  static final String VIEW_UUID = "view-uuid";
   static final String FORMAT_VERSION = "format-version";
   static final String LOCATION = "location";
   static final String CURRENT_VERSION_ID = "current-version-id";
@@ -45,7 +50,6 @@ public class ViewMetadataParser {
   static final String VERSION_LOG = "version-log";
   static final String PROPERTIES = "properties";
   static final String SCHEMAS = "schemas";
-  static final String CURRENT_SCHEMA_ID = "current-schema-id";
 
   private ViewMetadataParser() {}
 
@@ -62,10 +66,10 @@ public class ViewMetadataParser {
 
     gen.writeStartObject();
 
+    gen.writeStringField(VIEW_UUID, metadata.uuid());
     gen.writeNumberField(FORMAT_VERSION, metadata.formatVersion());
     gen.writeStringField(LOCATION, metadata.location());
     JsonUtil.writeStringMap(PROPERTIES, metadata.properties(), gen);
-    gen.writeNumberField(CURRENT_SCHEMA_ID, metadata.currentSchemaId());
 
     gen.writeArrayFieldStart(SCHEMAS);
     for (Schema schema : metadata.schemas()) {
@@ -89,21 +93,29 @@ public class ViewMetadataParser {
     gen.writeEndObject();
   }
 
+  public static ViewMetadata fromJson(String metadataLocation, String json) {
+    return JsonUtil.parse(json, node -> ViewMetadataParser.fromJson(metadataLocation, node));
+  }
+
   public static ViewMetadata fromJson(String json) {
     Preconditions.checkArgument(json != null, "Cannot parse view metadata from null string");
     return JsonUtil.parse(json, ViewMetadataParser::fromJson);
   }
 
   public static ViewMetadata fromJson(JsonNode json) {
+    return fromJson(null, json);
+  }
+
+  public static ViewMetadata fromJson(String metadataLocation, JsonNode json) {
     Preconditions.checkArgument(json != null, "Cannot parse view metadata from null object");
     Preconditions.checkArgument(
         json.isObject(), "Cannot parse view metadata from non-object: %s", json);
 
+    String uuid = JsonUtil.getString(VIEW_UUID, json);
     int formatVersion = JsonUtil.getInt(FORMAT_VERSION, json);
     String location = JsonUtil.getString(LOCATION, json);
     Map<String, String> properties = JsonUtil.getStringMap(PROPERTIES, json);
 
-    int currentSchemaId = JsonUtil.getInt(CURRENT_SCHEMA_ID, json);
     JsonNode schemasNode = JsonUtil.get(SCHEMAS, json);
 
     Preconditions.checkArgument(
@@ -132,16 +144,17 @@ public class ViewMetadataParser {
       historyEntries.add(ViewHistoryEntryParser.fromJson(vLog));
     }
 
-    return ImmutableViewMetadata.builder()
-        .location(location)
-        .currentVersionId(currentVersionId)
-        .properties(properties)
-        .versions(versions)
-        .schemas(schemas)
-        .currentSchemaId(currentSchemaId)
-        .history(historyEntries)
-        .formatVersion(formatVersion)
-        .build();
+    return ImmutableViewMetadata.of(
+        uuid,
+        formatVersion,
+        location,
+        schemas,
+        currentVersionId,
+        versions,
+        historyEntries,
+        properties,
+        ImmutableList.of(),
+        metadataLocation);
   }
 
   public static void overwrite(ViewMetadata metadata, OutputFile outputFile) {
@@ -153,8 +166,10 @@ public class ViewMetadataParser {
   }
 
   public static ViewMetadata read(InputFile file) {
-    try (InputStream is = file.newStream()) {
-      return fromJson(JsonUtil.mapper().readValue(is, JsonNode.class));
+    Codec codec = Codec.fromFileName(file.location());
+    try (InputStream is =
+        codec == Codec.GZIP ? new GZIPInputStream(file.newStream()) : file.newStream()) {
+      return fromJson(file.location(), JsonUtil.mapper().readValue(is, JsonNode.class));
     } catch (IOException e) {
       throw new UncheckedIOException(String.format("Failed to read json file: %s", file), e);
     }
@@ -162,8 +177,11 @@ public class ViewMetadataParser {
 
   private static void internalWrite(
       ViewMetadata metadata, OutputFile outputFile, boolean overwrite) {
+    boolean isGzip = Codec.fromFileName(outputFile.location()) == Codec.GZIP;
     OutputStream stream = overwrite ? outputFile.createOrOverwrite() : outputFile.create();
-    try (OutputStreamWriter writer = new OutputStreamWriter(stream, StandardCharsets.UTF_8)) {
+    try (OutputStreamWriter writer =
+        new OutputStreamWriter(
+            isGzip ? new GZIPOutputStream(stream) : stream, StandardCharsets.UTF_8)) {
       JsonGenerator generator = JsonUtil.factory().createGenerator(writer);
       generator.useDefaultPrettyPrinter();
       toJson(metadata, generator);

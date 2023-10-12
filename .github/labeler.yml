@@ -35,6 +35,8 @@ DOCS:
   - "**/*CHANGELOG.md"
   - "**/*README.md"
   - "**/*CONTRIBUTING.md"
+SPECIFICATION:
+  - "format/*"
 EXAMPLES:
   - examples/**/*
 COMMON:
@@ -43,8 +45,6 @@ API:
   - api/**/*
 CORE:
   - core/**/*
-PYTHON:
-  - python/**/*
 PARQUET:
   - parquet/**/*
 ARROW:
@@ -72,15 +72,20 @@ PIG:
   - pig/**/*
 AWS:
   - aws/**/*
+  - aws-bundle/**/*
 NESSIE:
   - nessie/**/*
 ALIYUN:
   - aliyun/**/*
 GCP:
   - gcp/**/*
+  - gcp-bundle/**/*
 DELL:
   - dell/**/*
 SNOWFLAKE:
   - snowflake/**/*
 OPENAPI:
   - open-api/**/*
+AZURE:
+  - azure/**/*
+  - azure-bundle/**/*
